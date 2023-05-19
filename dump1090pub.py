@@ -8,13 +8,16 @@ from datetime import datetime, timedelta
 import paho.mqtt.client as paho
 
 
-def convert_to_metric(altitude, speed, vertical_rate):
-    # 1 foot = 0.3048 meters
-    # 1 knot = 0.514444 m/s
-    altitude_meters = altitude * 0.3048 if altitude else None
-    speed_ms = speed * 0.514444 if speed else None
-    vertical_rate_ms = vertical_rate * 0.514444 if vertical_rate else None
-    return altitude_meters, speed_ms, vertical_rate_ms
+def convert_to_metric(altitude=None, speed=None, vertical_rate=None):
+    feet_to_meters = 0.3048
+    knots_to_kmh = 1.852
+    fpm_to_ms = 0.00508
+
+    altitude_meters = int(altitude * feet_to_meters) if altitude is not None else None
+    speed_kmh = int(speed * knots_to_kmh) if speed is not None else None
+    vertical_rate_ms = int(vertical_rate * fpm_to_ms) if vertical_rate is not None else None
+
+    return altitude_meters, speed_kmh, vertical_rate_ms
 
 def valid_hex(hex_code):
     try:
@@ -50,14 +53,19 @@ def parse_data(radar, line, airplanes):
         if fields[1] == "1":
             airplane["flight_number"] = fields[10].strip()
         elif fields[1] == "3":
-            airplane["altitude"] = fields[11]
+            altitude, _, _ = convert_to_metric(altitude=float(fields[11]) if fields[11] else None)
+            airplane["altitude"] = altitude
             airplane["location"] = f"{fields[14]},{fields[15]}"
         elif fields[1] == "4":
-            airplane["speed"] = fields[12]
-            airplane["heading"] = fields[13]
-            airplane["vertical_rate"] = fields[16]
+            _, speed, vertical_rate = convert_to_metric(
+                speed=float(fields[12]) if fields[12] else None,
+                vertical_rate=float(fields[16]) if fields[16] else None
+            )
+            airplane["speed"] = speed
+            airplane["vertical_rate"] = vertical_rate
+            airplane["heading"] = int(float(f"{fields[13]}")) if fields[13] else None
         elif fields[1] == "5":
-            airplane["squawk"] = fields[17]
+            airplane["squawk"] = fields[17] if fields[17] else "None"
     elif message_type == "STA" or message_type == "AIR":
         airplane["hex_code"] = hex_code
 
@@ -75,7 +83,8 @@ def parse_data(radar, line, airplanes):
                 airplane.get("vertical_rate", "None"),
                 airplane.get("squawk", "None"),
             ]
-            message = ",".join(message_parts)
+            # message = ",".join(message_parts)
+            message = ",".join(str(part) for part in message_parts)
             return topic, message
 
     return None, None
