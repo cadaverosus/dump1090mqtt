@@ -110,42 +110,60 @@ def parse_options():
                       help="write out topic and payload to console")
     return parser.parse_args()
 
-def publish():
-    """publish to topic /radar/icioaddr with ADS-B feed read from socket"""
+class Publisher:
+    def __init__(self):
+        self.ttc = None
+        self.socket_file = None
+        self.feeder_socket = None
 
-    (options, _) = parse_options()
+    def publish(self):
+        """publish to topic /radar/icioaddr with ADS-B feed read from socket"""
 
-    airplanes = {}
-    ttc = paho.Client()
-    if options.mqtt_user != '':
-        ttc.username_pw_set(options.mqtt_user, password=options.mqtt_password)
-    ttc.connect(options.mqtt_host, options.mqtt_port)
+        (options, _) = parse_options()
 
-    feeder_socket = socket(AF_INET, SOCK_STREAM)
-    feeder_socket.connect((options.dump1090_host, options.dump1090_port))
-    socket_file = feeder_socket.makefile()
+        airplanes = {}
+        ttc = paho.Client()
+        if options.mqtt_user != '':
+            ttc.username_pw_set(options.mqtt_user, password=options.mqtt_password)
+        ttc.connect(options.mqtt_host, options.mqtt_port)
 
-    line = socket_file.readline()
-    while line:
-        fields = line.split(",")
-        hex_code = fields[4]
-        if hex_code not in airplanes:
-            airplanes[hex_code] = {"last_sent": None}
-        airplane = airplanes[hex_code]
-        topic, message = parse_data(options.radar, line, airplane)
-        now = datetime.now()
-        if topic is not None and message is not None:
-            if airplane["last_sent"] is None or now - airplane["last_sent"] >= timedelta(minutes=3):
-                airplane["last_sent"] = now
-                ttc.publish(topic, message)
-                if options.console:
-                    print(topic, message)
+        feeder_socket = socket(AF_INET, SOCK_STREAM)
+        feeder_socket.connect((options.dump1090_host, options.dump1090_port))
+        socket_file = feeder_socket.makefile()
+
         line = socket_file.readline()
+        while line:
+            fields = line.split(",")
+            hex_code = fields[4]
+            if hex_code not in airplanes:
+                airplanes[hex_code] = {"last_sent": None}
+            airplane = airplanes[hex_code]
+            topic, message = parse_data(options.radar, line, airplane)
+            now = datetime.now()
+            if topic is not None and message is not None:
+                if airplane["last_sent"] is None or now - airplane["last_sent"] >= timedelta(minutes=3):
+                    airplane["last_sent"] = now
+                    ttc.publish(topic, message)
+                    if options.console:
+                        print(topic, message)
+            line = socket_file.readline()
 
-    ttc.disconnect()
-    socket_file.close()
-    feeder_socket.close()
+        ttc.disconnect()
+        socket_file.close()
+        feeder_socket.close()
+
+    def cleanup(self):
+        if self.ttc:
+            self.ttc.disconnect()
+        if self.socket_file:
+            self.socket_file.close()
+        if self.feeder_socket:
+            self.feeder_socket.close()
 
 if __name__ == '__main__':
-    publish()
-
+    publisher = Publisher()
+    try:
+        publisher.publish()
+    except KeyboardInterrupt:
+        print("\nCtrl+C received. Disconnecting and closing sockets...")
+        publisher.cleanup()
