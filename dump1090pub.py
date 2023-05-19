@@ -45,10 +45,13 @@ def parse_data(line, airplanes):
         if hex_code not in airplanes:
             airplanes[hex_code] = {
                 "flight_number": None,
+                "tail_number": None,
                 "location": None,
                 "altitude": None,
                 "speed": None,
                 "vertical_rate": None,
+                "squawk": None,
+                "emergency": None,
                 "last_sent": None,
             }
         airplane = airplanes[hex_code]
@@ -57,7 +60,7 @@ def parse_data(line, airplanes):
             airplane["flight_number"] = columns[10]
 
         if columns[0] == "MSG" and columns[1] == "3" and valid_location(columns[14], columns[15]):
-            airplane["location"] = (float(columns[14]), float(columns[15]))
+            airplane["location"] = f"{float(columns[14])},{float(columns[15])}"
 
         if columns[0] == "MSG" and columns[1] == "4":
             airplane["altitude"], airplane["speed"], airplane["vertical_rate"] = convert_to_metric(
@@ -66,18 +69,26 @@ def parse_data(line, airplanes):
                 float(columns[16]) if columns[16] else None,
             )
 
+        if columns[0] == "MSG" and columns[1] == "1":
+            airplane["tail_number"] = columns[10]
+
+        if columns[0] == "MSG" and (columns[1] == "5" or columns[1] == "6"):
+            airplane["squawk"] = columns[10]
+            airplane["emergency"] = columns[14]
+
         if (
             airplane["flight_number"] is not None
             and airplane["location"] is not None
+            and airplane["tail_number"] is not None
             and (airplane["last_sent"] is None or now - airplane["last_sent"] >= timedelta(minutes=3))
         ):
+            payload = f"{airplane['altitude'] or ''},{airplane['speed'] or ''},{airplane['vertical_rate'] or ''},{airplane['squawk'] or ''},{airplane['emergency'] or ''}"
             message = {
-                "topic": f"/adsb/{hex_code}/{airplane['flight_number']}/{airplane['location']}",
-                "payload": f"{airplane['altitude']},{airplane['speed']},{airplane['vertical_rate']}",
+                "topic": f"/adsb/{hex_code}/{airplane['flight_number']}/{airplane['tail_number']}/{airplane['location']}",
+                "payload": payload.strip(','),
             }
             airplane["last_sent"] = now
             return message
-
     else:
         print(f"Invalid hex code: {hex_code}")
     return None
