@@ -5,6 +5,7 @@ Publish dump1090 output to MQTT
 
 from socket import socket, AF_INET, SOCK_STREAM
 from datetime import datetime, timedelta
+import json
 import paho.mqtt.client as paho
 
 
@@ -65,19 +66,20 @@ def parse_data(radar, line, airplane):
 
     if all(key in airplane for key in ["flight_number", "location"]):
         topic = f"adsb/{radar}"
-        message_parts = [
-            hex_code,
-            airplane["flight_number"],
-            airplane["location"],
-            airplane.get("altitude", "None"),
-            airplane.get("speed", "None"),
-            airplane.get("heading", "None"),
-            airplane.get("vertical_rate", "None"),
-            airplane.get("squawk", "None"),
-        ]
+        message = {
+            "icao_hex": hex_code,
+            "icao_flight_number": airplane["flight_number"],
+            "location": airplane["location"],
+            "altitude_m": airplane.get("altitude", "None"),
+            "speed_kmh": airplane.get("speed", "None"),
+            "heading": airplane.get("heading", "None"),
+            "vertical_rate_ms": airplane.get("vertical_rate", "None"),
+            "squawk": airplane.get("squawk", "None"),
+        }
         # message = ",".join(message_parts)
-        message = ",".join(str(part) for part in message_parts)
-        return topic, message
+        #message = ",".join(str(part) for part in message_parts)
+        payload = json.dumps(message)
+        return topic, payload
 
     return None, None
 
