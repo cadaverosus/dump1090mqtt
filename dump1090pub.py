@@ -45,6 +45,10 @@ def parse_data(radar, line, airplane):
     fields = line.split(",")
     message_type = fields[0]
     hex_code = fields[4]
+    if "location" in airplane:
+        prev_location = airplane["location"]
+    else:
+        prev_location = None
 
     if message_type == "MSG":
         if fields[1] == "1":
@@ -66,6 +70,10 @@ def parse_data(radar, line, airplane):
     elif message_type == "STA" or message_type == "AIR":
         airplane["hex_code"] = hex_code
 
+    if prev_location:
+        if airplane["location"] == prev_location:
+            #print('same location ' + hex_code)
+            return airplane["location"], None, None
     if all(key in airplane for key in ["flight_number", "location"]):
         topic = f"adsb/{radar}/update"
         message = {
@@ -81,9 +89,9 @@ def parse_data(radar, line, airplane):
         # message = ",".join(message_parts)
         #message = ",".join(str(part) for part in message_parts)
         payload = json.dumps(message)
-        return topic, payload
+        return airplane["location"], topic, payload
 
-    return None, None
+    return None, None, None
 
 def parse_options():
     """parse command line options
@@ -151,11 +159,12 @@ class Publisher:
                 airplanes[hex_code] = {"last_sent": None}
             airplane = airplanes[hex_code]
 
-            topic, message = parse_data(self.radar, line, airplane)
+            location, topic, message = parse_data(self.radar, line, airplane)
             now = datetime.now()
             if topic is not None and message is not None:
-                if airplane["last_sent"] is None or now - airplane["last_sent"] >= timedelta(minutes=3):
+                if airplane["last_sent"] is None or now - airplane["last_sent"] >= timedelta(seconds=30):
                     airplane["last_sent"] = now
+                    airplane["location"] = location
                     self.ttc.publish(topic, message)
                     if self.console:
                         print(f"{topic}, {message}")
