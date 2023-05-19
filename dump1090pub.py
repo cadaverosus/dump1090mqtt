@@ -5,8 +5,10 @@ Publish dump1090 output to MQTT
 
 from socket import socket, AF_INET, SOCK_STREAM
 from datetime import datetime, timedelta
+import threading
 import json
 import paho.mqtt.client as paho
+import time
 
 
 def convert_to_metric(altitude=None, speed=None, vertical_rate=None):
@@ -65,7 +67,7 @@ def parse_data(radar, line, airplane):
         airplane["hex_code"] = hex_code
 
     if all(key in airplane for key in ["flight_number", "location"]):
-        topic = f"adsb/{radar}"
+        topic = f"adsb/{radar}/update"
         message = {
             "icao_hex": hex_code,
             "icao_flight_number": airplane["flight_number"],
@@ -112,49 +114,61 @@ def parse_options():
 
 class Publisher:
     def __init__(self):
-        self.ttc = None
-        self.socket_file = None
-        self.feeder_socket = None
+        #self.ttc = None
+        (options, _) = parse_options()
+
+        self.ttc = paho.Client()
+        if options.mqtt_user != '':
+            self.ttc.username_pw_set(options.mqtt_user, password=options.mqtt_password)
+        self.ttc.connect(options.mqtt_host, options.mqtt_port)
+
+        self.feeder_socket = socket(AF_INET, SOCK_STREAM)
+        self.feeder_socket.connect((options.dump1090_host, options.dump1090_port))
+        self.socket_file = self.feeder_socket.makefile()
+        self.radar = options.radar
+        if options.console:
+            self.console = True
+        self.shutdown_flag = False
+        #self.socket_file = None
+        #self.feeder_socket = None
+
+    def start_status_loop(self, interval):
+        while not self.shutdown_flag:
+            self.ttc.publish("adsb/TEST/status", "ok")
+            print(f"adsb/TEST/status ok")
+            time.sleep(interval)
 
     def publish(self):
         """publish to topic /radar/icioaddr with ADS-B feed read from socket"""
 
-        (options, _) = parse_options()
-
         airplanes = {}
-        ttc = paho.Client()
-        if options.mqtt_user != '':
-            ttc.username_pw_set(options.mqtt_user, password=options.mqtt_password)
-        ttc.connect(options.mqtt_host, options.mqtt_port)
 
-        feeder_socket = socket(AF_INET, SOCK_STREAM)
-        feeder_socket.connect((options.dump1090_host, options.dump1090_port))
-        socket_file = feeder_socket.makefile()
-
-        line = socket_file.readline()
+        line = self.socket_file.readline()
         while line:
             fields = line.split(",")
             hex_code = fields[4]
             if hex_code not in airplanes:
                 airplanes[hex_code] = {"last_sent": None}
             airplane = airplanes[hex_code]
-            topic, message = parse_data(options.radar, line, airplane)
+            topic, message = parse_data(self.radar, line, airplane)
             now = datetime.now()
             if topic is not None and message is not None:
                 if airplane["last_sent"] is None or now - airplane["last_sent"] >= timedelta(minutes=3):
                     airplane["last_sent"] = now
-                    ttc.publish(topic, message)
-                    if options.console:
+                    self.ttc.publish(topic, message)
+                    if self.console:
                         print(f"{topic}, {message}")
-            line = socket_file.readline()
+            line = self.socket_file.readline()
 
-        ttc.disconnect()
-        socket_file.close()
-        feeder_socket.close()
+        self.ttc.disconnect()
+        time.sleep(2)  # fixme wait for async .disconnect()
+        self.socket_file.close()
+        self.feeder_socket.close()
 
     def cleanup(self):
         if self.ttc:
             self.ttc.disconnect()
+#            time.sleep(2)  # fixme wait for async .disconnect()
         if self.socket_file:
             self.socket_file.close()
         if self.feeder_socket:
@@ -163,7 +177,12 @@ class Publisher:
 if __name__ == '__main__':
     publisher = Publisher()
     try:
+        #threading.Thread(target=self.start_status_loop, args=(60,)).start()
+        status_thread = threading.Thread(target=publisher.start_status_loop, args=(60,))
+        status_thread.start()
         publisher.publish()
     except KeyboardInterrupt:
         print("\nCtrl+C received. Disconnecting and closing sockets...")
+        publisher.shutdown_flag = True
+        status_thread.join()
         publisher.cleanup()
