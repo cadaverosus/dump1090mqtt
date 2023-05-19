@@ -145,7 +145,7 @@ class Publisher:
                     airplane["last_sent"] = now
                     ttc.publish(topic, message)
                     if options.console:
-                        print(topic, message)
+                        print(f"{topic}, {message}")
             line = socket_file.readline()
 
         ttc.disconnect()
