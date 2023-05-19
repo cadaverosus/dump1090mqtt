@@ -114,7 +114,6 @@ def parse_options():
 
 class Publisher:
     def __init__(self):
-        #self.ttc = None
         (options, _) = parse_options()
 
         self.ttc = paho.Client()
@@ -125,17 +124,18 @@ class Publisher:
         self.feeder_socket = socket(AF_INET, SOCK_STREAM)
         self.feeder_socket.connect((options.dump1090_host, options.dump1090_port))
         self.socket_file = self.feeder_socket.makefile()
+
         self.radar = options.radar
         if options.console:
             self.console = True
         self.shutdown_flag = False
-        #self.socket_file = None
-        #self.feeder_socket = None
 
     def start_status_loop(self, interval):
         while not self.shutdown_flag:
-            self.ttc.publish("adsb/TEST/status", "ok")
-            print(f"adsb/TEST/status ok")
+            topic = f"adsb/{self.radar}/status"
+            message = f"ok"
+            self.ttc.publish(topic, message)
+            print(f"{topic}, {message}")
             time.sleep(interval)
 
     def publish(self):
@@ -150,6 +150,7 @@ class Publisher:
             if hex_code not in airplanes:
                 airplanes[hex_code] = {"last_sent": None}
             airplane = airplanes[hex_code]
+
             topic, message = parse_data(self.radar, line, airplane)
             now = datetime.now()
             if topic is not None and message is not None:
@@ -158,26 +159,22 @@ class Publisher:
                     self.ttc.publish(topic, message)
                     if self.console:
                         print(f"{topic}, {message}")
-            line = self.socket_file.readline()
 
-        self.ttc.disconnect()
-        time.sleep(2)  # fixme wait for async .disconnect()
-        self.socket_file.close()
-        self.feeder_socket.close()
+            line = self.socket_file.readline()
+            if self.shutdown_flag:
+                break
 
     def cleanup(self):
-        if self.ttc:
-            self.ttc.disconnect()
-#            time.sleep(2)  # fixme wait for async .disconnect()
         if self.socket_file:
             self.socket_file.close()
         if self.feeder_socket:
             self.feeder_socket.close()
+        if self.ttc:
+            self.ttc.disconnect()
 
 if __name__ == '__main__':
     publisher = Publisher()
     try:
-        #threading.Thread(target=self.start_status_loop, args=(60,)).start()
         status_thread = threading.Thread(target=publisher.start_status_loop, args=(60,))
         status_thread.start()
         publisher.publish()
@@ -185,4 +182,3 @@ if __name__ == '__main__':
         print("\nCtrl+C received. Disconnecting and closing sockets...")
         publisher.shutdown_flag = True
         status_thread.join()
-        publisher.cleanup()
