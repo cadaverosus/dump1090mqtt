@@ -4,8 +4,83 @@ Publish dump1090 output to MQTT
 """
 
 from socket import socket, AF_INET, SOCK_STREAM
+from datetime import datetime, timedelta
 import paho.mqtt.client as paho
 
+
+def convert_to_metric(altitude, speed, vertical_rate):
+    # 1 foot = 0.3048 meters
+    # 1 knot = 0.514444 m/s
+    altitude_meters = altitude * 0.3048 if altitude else None
+    speed_ms = speed * 0.514444 if speed else None
+    vertical_rate_ms = vertical_rate * 0.514444 if vertical_rate else None
+    return altitude_meters, speed_ms, vertical_rate_ms
+
+def valid_hex(hex_code):
+    try:
+        int(hex_code, 16)
+        return True
+    except ValueError:
+        return False
+
+def valid_flight_number(flight_number):
+    # add your flight number validation logic here
+    return True
+
+def valid_location(lat, lon):
+    try:
+        lat = float(lat)
+        lon = float(lon)
+        return -90 <= lat <= 90 and -180 <= lon <= 180
+    except ValueError:
+        return False
+
+def parse_data(line, airplanes):
+    line = line.strip()
+    columns = line.split(',')
+    hex_code = columns[4]
+    now = datetime.now()
+
+    if valid_hex(hex_code):
+        if hex_code not in airplanes:
+            airplanes[hex_code] = {
+                "flight_number": None,
+                "location": None,
+                "altitude": None,
+                "speed": None,
+                "vertical_rate": None,
+                "last_sent": None,
+            }
+        airplane = airplanes[hex_code]
+
+        if columns[0] == "ID" and valid_flight_number(columns[10]):
+            airplane["flight_number"] = columns[10]
+
+        if columns[0] == "MSG" and columns[1] == "3" and valid_location(columns[14], columns[15]):
+            airplane["location"] = (float(columns[14]), float(columns[15]))
+
+        if columns[0] == "MSG" and columns[1] == "4":
+            airplane["altitude"], airplane["speed"], airplane["vertical_rate"] = convert_to_metric(
+                float(columns[11]) if columns[11] else None,
+                float(columns[12]) if columns[12] else None,
+                float(columns[16]) if columns[16] else None,
+            )
+
+        if (
+            airplane["flight_number"] is not None
+            and airplane["location"] is not None
+            and (airplane["last_sent"] is None or now - airplane["last_sent"] >= timedelta(minutes=3))
+        ):
+            message = {
+                "topic": f"/adsb/{hex_code}/{airplane['flight_number']}/{airplane['location']}",
+                "payload": f"{airplane['altitude']},{airplane['speed']},{airplane['vertical_rate']}",
+            }
+            airplane["last_sent"] = now
+            return message
+
+    else:
+        print(f"Invalid hex code: {hex_code}")
+    return None
 
 def parse_options():
     """parse command line options
@@ -39,6 +114,7 @@ def publish():
 
     (options, _) = parse_options()
 
+    airplanes = {}
     ttc = paho.Client()
     if options.mqtt_user != '':
         ttc.username_pw_set(options.mqtt_user, password=options.mqtt_password)
@@ -50,16 +126,12 @@ def publish():
 
     line = socket_file.readline()
     while line:
-        try:
-            line = line.strip()
-            columns = line.split(',')
-            topic = "/adsb/%s/%s" % (options.radar, columns[4])
-            ttc.publish(topic, line)
+        message = parse_data(line, airplanes)
+        if message is not None:
+            ttc.publish(message['topic'], message['payload'])
             if options.console:
-                print(topic, line)
-            line = socket_file.readline()
-        except IndexError:
-            print('cannot parse line: %s' % line)
+                print(message['topic'], message['payload'])
+        line = socket_file.readline()
 
     ttc.disconnect()
     socket_file.close()
