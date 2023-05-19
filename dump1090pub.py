@@ -38,16 +38,10 @@ def valid_location(lat, lon):
     except ValueError:
         return False
 
-def parse_data(radar, line, airplanes):
+def parse_data(radar, line, airplane):
     fields = line.split(",")
     message_type = fields[0]
     hex_code = fields[4]
-    now = datetime.now()
-
-    if hex_code not in airplanes:
-        airplanes[hex_code] = {"last_sent": None}
-
-    airplane = airplanes[hex_code]
 
     if message_type == "MSG":
         if fields[1] == "1":
@@ -70,22 +64,20 @@ def parse_data(radar, line, airplanes):
         airplane["hex_code"] = hex_code
 
     if all(key in airplane for key in ["flight_number", "location"]):
-        if airplane["last_sent"] is None or now - airplane["last_sent"] >= timedelta(minutes=3):
-            airplane["last_sent"] = now
-            topic = f"adsb/{radar}"
-            message_parts = [
-                hex_code,
-                airplane["flight_number"],
-                airplane["location"],
-                airplane.get("altitude", "None"),
-                airplane.get("speed", "None"),
-                airplane.get("heading", "None"),
-                airplane.get("vertical_rate", "None"),
-                airplane.get("squawk", "None"),
-            ]
-            # message = ",".join(message_parts)
-            message = ",".join(str(part) for part in message_parts)
-            return topic, message
+        topic = f"adsb/{radar}"
+        message_parts = [
+            hex_code,
+            airplane["flight_number"],
+            airplane["location"],
+            airplane.get("altitude", "None"),
+            airplane.get("speed", "None"),
+            airplane.get("heading", "None"),
+            airplane.get("vertical_rate", "None"),
+            airplane.get("squawk", "None"),
+        ]
+        # message = ",".join(message_parts)
+        message = ",".join(str(part) for part in message_parts)
+        return topic, message
 
     return None, None
 
@@ -133,11 +125,19 @@ def publish():
 
     line = socket_file.readline()
     while line:
-        topic, message = parse_data(options.radar, line, airplanes)
+        fields = line.split(",")
+        hex_code = fields[4]
+        if hex_code not in airplanes:
+            airplanes[hex_code] = {"last_sent": None}
+        airplane = airplanes[hex_code]
+        topic, message = parse_data(options.radar, line, airplane)
+        now = datetime.now()
         if topic is not None and message is not None:
-            ttc.publish(topic, message)
-            if options.console:
-                print(topic, message)
+            if airplane["last_sent"] is None or now - airplane["last_sent"] >= timedelta(minutes=3):
+                airplane["last_sent"] = now
+                ttc.publish(topic, message)
+                if options.console:
+                    print(topic, message)
         line = socket_file.readline()
 
     ttc.disconnect()
