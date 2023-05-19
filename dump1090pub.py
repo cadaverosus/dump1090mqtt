@@ -36,63 +36,49 @@ def valid_location(lat, lon):
         return False
 
 def parse_data(radar, line, airplanes):
-    line = line.strip()
-    columns = line.split(',')
-    message_type = columns[0]
-    hex_code = columns[4]
+    fields = line.split(",")
+    message_type = fields[0]
+    hex_code = fields[4]
     now = datetime.now()
 
-    if valid_hex(hex_code):
-        if hex_code not in airplanes:
-            airplanes[hex_code] = {
-                "flight_number": None,
-                "tail_number": None,
-                "location": None,
-                "altitude": None,
-                "speed": None,
-                "vertical_rate": None,
-                "squawk": None,
-                "emergency": None,
-                "last_sent": None,
-            }
-        airplane = airplanes[hex_code]
+    if hex_code not in airplanes:
+        airplanes[hex_code] = {"last_sent": None}
 
-        if message_type in ["MSG", "ID"] and valid_flight_number(columns[10]):
-            airplane["flight_number"] = columns[10]
+    airplane = airplanes[hex_code]
 
-        if message_type == "MSG" and columns[1] == "3" and valid_location(columns[14], columns[15]):
-            airplane["location"] = f"{float(columns[14])},{float(columns[15])}"
+    if message_type == "MSG":
+        if fields[1] == "1":
+            airplane["flight_number"] = fields[10].strip()
+        elif fields[1] == "3":
+            airplane["altitude"] = fields[11]
+            airplane["location"] = f"{fields[14]},{fields[15]}"
+        elif fields[1] == "4":
+            airplane["speed"] = fields[12]
+            airplane["heading"] = fields[13]
+            airplane["vertical_rate"] = fields[16]
+        elif fields[1] == "5":
+            airplane["squawk"] = fields[17]
+    elif message_type == "STA" or message_type == "AIR":
+        airplane["hex_code"] = hex_code
 
-        if message_type == "MSG" and columns[1] == "4":
-            airplane["altitude"], airplane["speed"], airplane["vertical_rate"] = convert_to_metric(
-                float(columns[11]) if columns[11] else None,
-                float(columns[12]) if columns[12] else None,
-                float(columns[16]) if columns[16] else None,
-            )
-
-        if message_type == "MSG" and columns[1] == "1":
-            airplane["tail_number"] = columns[10]
-
-        if message_type == "MSG" and (columns[1] == "5" or columns[1] == "6"):
-            airplane["squawk"] = columns[10]
-            airplane["emergency"] = columns[14]
-
-        if (
-            airplane["flight_number"] is not None
-            and airplane["location"] is not None
-            and airplane["tail_number"] is not None
-            and (airplane["last_sent"] is None or now - airplane["last_sent"] >= timedelta(minutes=3))
-        ):
-            payload = f"{airplane['altitude'] or ''},{airplane['speed'] or ''},{airplane['vertical_rate'] or ''},{airplane['squawk'] or ''},{airplane['emergency'] or ''}"
-            message = {
-                "topic": f"/adsb/{radar}/{hex_code}/{airplane['flight_number']}/{airplane['tail_number']}/{airplane['location']}",
-                "payload": payload.strip(','),
-            }
+    if all(key in airplane for key in ["flight_number", "location"]):
+        if airplane["last_sent"] is None or now - airplane["last_sent"] >= timedelta(minutes=3):
             airplane["last_sent"] = now
-            return message
-    else:
-        print(f"Invalid hex code: {hex_code}")
-    return None
+            topic = f"adsb/{radar}"
+            message_parts = [
+                hex_code,
+                airplane["flight_number"],
+                airplane["location"],
+                airplane.get("altitude", "None"),
+                airplane.get("speed", "None"),
+                airplane.get("heading", "None"),
+                airplane.get("vertical_rate", "None"),
+                airplane.get("squawk", "None"),
+            ]
+            message = ",".join(message_parts)
+            return topic, message
+
+    return None, None
 
 def parse_options():
     """parse command line options
@@ -138,11 +124,11 @@ def publish():
 
     line = socket_file.readline()
     while line:
-        message = parse_data(radar, line, airplanes)
-        if message is not None:
-            ttc.publish(message['topic'], message['payload'])
+        topic, message = parse_data(options.radar, line, airplanes)
+        if topic is not None and message is not None:
+            ttc.publish(topic, message)
             if options.console:
-                print(message['topic'], message['payload'])
+                print(topic, message)
         line = socket_file.readline()
 
     ttc.disconnect()
