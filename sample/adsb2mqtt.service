@@ -1,0 +1,18 @@
+[Unit]
+Description=ADS-B to MQTT Publisher Service
+After=network.target
+
+[Service]
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /usr/share/fr24/dump1090mqtt/dump1090pub.py -r T-KJFK100 -m hass.local -p 1883 -u user -a password -c
+Restart=always
+Type=simple
+User=fr24
+Group=fr24
+KillSignal=SIGINT
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=adsb2mqtt
+
+[Install]
+WantedBy=multi-user.target
